@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Zap, MousePointer2, Timer, PlayCircle, RefreshCw, Clock } from 'lucide-react';
+import { Zap, MousePointer2, Timer, PlayCircle, RefreshCw, Clock, Layers } from 'lucide-react';
 
 declare const chrome: any;
 
@@ -25,12 +25,14 @@ export const BotControls: React.FC<BotControlsProps> = ({
 }) => {
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [dropTime, setDropTime] = useState("12:00");
+  const [multiOrder, setMultiOrder] = useState(false);
 
   useEffect(() => {
     if (typeof chrome !== 'undefined' && chrome.storage) {
-      chrome.storage.local.get(['autoRefreshEnabled', 'dropTime'], (result: any) => {
+      chrome.storage.local.get(['autoRefreshEnabled', 'dropTime', 'multiOrderEnabled'], (result: any) => {
         if (result.autoRefreshEnabled !== undefined) setAutoRefresh(result.autoRefreshEnabled);
         if (result.dropTime !== undefined) setDropTime(result.dropTime);
+        if (result.multiOrderEnabled !== undefined) setMultiOrder(result.multiOrderEnabled);
       });
     }
   }, []);
@@ -39,6 +41,13 @@ export const BotControls: React.FC<BotControlsProps> = ({
     setAutoRefresh(val);
     if (typeof chrome !== 'undefined' && chrome.storage) {
       chrome.storage.local.set({ autoRefreshEnabled: val });
+    }
+  };
+
+  const handleMultiOrderToggle = (val: boolean) => {
+    setMultiOrder(val);
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      chrome.storage.local.set({ multiOrderEnabled: val });
     }
   };
 
@@ -61,7 +70,6 @@ export const BotControls: React.FC<BotControlsProps> = ({
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8 lg:gap-12">
         
-        {/* Auto-clicker & Delay */}
         <div className="space-y-6">
           <div className="flex items-center justify-between bg-white/5 p-4 rounded-xl border border-white/5">
             <div className="flex items-center gap-3">
@@ -77,7 +85,7 @@ export const BotControls: React.FC<BotControlsProps> = ({
                 onChange={(e) => onToggleAutoClicker(e.target.checked)}
                 className="sr-only peer" 
               />
-              <div className="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#0D66CE]"></div>
+              <div className="w-11 h-6 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-[#0D66CE] after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
             </label>
           </div>
           
@@ -94,7 +102,6 @@ export const BotControls: React.FC<BotControlsProps> = ({
             />
           </div>
 
-          {/* NEW: Auto Refresh Section */}
           <div className="p-4 rounded-xl bg-blue-500/5 border border-blue-500/10 space-y-4">
              <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -114,62 +121,59 @@ export const BotControls: React.FC<BotControlsProps> = ({
              
              <div className="flex items-center gap-3">
                 <div className="flex-1">
-                   <div className="text-[9px] text-gray-500 uppercase font-bold mb-1">Время старта продаж</div>
-                   <div className="relative">
-                      <Clock className="absolute left-3 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-400" />
-                      <input 
-                        type="time" 
-                        step="1"
-                        value={dropTime}
-                        onChange={(e) => handleTimeChange(e.target.value)}
-                        className="w-full bg-gray-800 border-none rounded-lg py-2 pl-8 pr-3 text-xs text-white focus:ring-1 focus:ring-blue-500"
-                      />
-                   </div>
+                   <div className="text-[9px] text-gray-500 uppercase font-bold mb-1">Время старта</div>
+                   <input 
+                     type="time" step="1" value={dropTime}
+                     onChange={(e) => handleTimeChange(e.target.value)}
+                     className="w-full bg-gray-800 border-none rounded-lg py-2 px-3 text-xs text-white"
+                   />
                 </div>
              </div>
-             <p className="text-[9px] text-gray-500 leading-tight">
-                * Начнет обновлять страницу за 1 мин до указанного времени и остановится при появлении кнопки.
-             </p>
           </div>
         </div>
 
-        {/* Training Section */}
         <div className="space-y-6 md:border-l md:border-gray-800 md:pl-8">
-           <div className="flex items-center gap-3">
-              <div className="w-8 h-8 bg-green-500/20 rounded-lg flex items-center justify-center">
-                <Timer className="text-green-500 w-4 h-4" />
+           <div className="flex items-center justify-between bg-purple-500/10 p-4 rounded-xl border border-purple-500/20">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 bg-purple-500/20 rounded-lg flex items-center justify-center">
+                  <Layers className="text-purple-400 w-4 h-4" />
+                </div>
+                <div>
+                   <span className="font-bold text-sm text-gray-200 block">Конвейер</span>
+                   <span className="text-[9px] text-gray-500">Повтор после успеха</span>
+                </div>
               </div>
-              <span className="font-bold text-sm lg:text-base text-gray-200">Тренажер реакции</span>
-            </div>
-            
-            <button
-              onClick={onStartTraining}
-              disabled={isTraining}
-              className={`w-full flex items-center justify-center gap-2 py-4 rounded-xl font-bold transition-all
-                ${isTraining 
-                  ? 'bg-gray-800 text-gray-600' 
-                  : 'bg-green-600 hover:bg-green-700 text-white shadow-lg shadow-green-900/20'}
-              `}
-            >
-              <PlayCircle className="w-5 h-5" />
-              {isTraining ? 'Ожидание дропа...' : 'Режим тренировки'}
-            </button>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input 
+                  type="checkbox" 
+                  checked={multiOrder}
+                  onChange={(e) => handleMultiOrderToggle(e.target.checked)}
+                  className="sr-only peer" 
+                />
+                <div className="w-10 h-5 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-purple-600 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all"></div>
+              </label>
+           </div>
 
-            {lastReactionTime !== null && (
+           <button
+             onClick={onStartTraining}
+             disabled={isTraining}
+             className={`w-full flex items-center justify-center gap-2 py-4 rounded-xl font-bold transition-all
+               ${isTraining ? 'bg-gray-800 text-gray-600' : 'bg-green-600 hover:bg-green-700 text-white shadow-lg'}
+             `}
+           >
+             <PlayCircle className="w-5 h-5" />
+             {isTraining ? 'Ожидание...' : 'Тренажер'}
+           </button>
+
+           {lastReactionTime !== null && (
               <div className="bg-white/5 rounded-2xl p-4 text-center border border-white/5">
-                <span className="text-[10px] text-gray-500 uppercase font-black block mb-1">Последний результат</span>
-                <span className={`text-3xl font-black ${lastReactionTime < 250 ? 'text-green-400' : 'text-yellow-400'}`}>
-                  {lastReactionTime} <span className="text-sm font-normal">мс</span>
-                </span>
+                <span className="text-[10px] text-gray-500 uppercase font-black block mb-1">Реакция</span>
+                <span className="text-3xl font-black text-green-400">{lastReactionTime} <span className="text-sm font-normal">мс</span></span>
               </div>
-            )}
+           )}
         </div>
-
       </div>
-      <style>{`
-        .animate-spin-slow { animation: spin 3s linear infinite; }
-        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-      `}</style>
+      <style>{`.animate-spin-slow { animation: spin 3s linear infinite; } @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 };
