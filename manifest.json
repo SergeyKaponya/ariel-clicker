@@ -1,0 +1,29 @@
+
+{
+  "manifest_version": 3,
+  "name": "Ariel Drop Assistant",
+  "version": "1.0.0",
+  "description": "Автоматизация и тренировка для покупки лимитированных игрушек на f-ariel.ru",
+  "permissions": [
+    "storage",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://*.f-ariel.ru/*"
+  ],
+  "action": {
+    "default_popup": "index.html",
+    "default_title": "Ariel Bot Controls"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://*.f-ariel.ru/*"],
+      "js": ["contentScript.js"]
+    }
+  ],
+  "icons": {
+    "16": "https://www.f-ariel.ru/favicon.ico",
+    "48": "https://www.f-ariel.ru/favicon.ico",
+    "128": "https://www.f-ariel.ru/favicon.ico"
+  }
+}

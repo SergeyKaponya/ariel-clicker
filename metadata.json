@@ -1,0 +1,15 @@
+{
+  "name": "Ariel Drop Assistant",
+  "description": "Автоматизация и тренажер для покупки лимитированных игрушек фабрики Ариель.",
+  "requestFramePermissions": [],
+  "extension_settings": {
+    "permissions": [
+      "storage",
+      "activeTab",
+      "scripting"
+    ],
+    "host_permissions": [
+      "https://*.f-ariel.ru/*"
+    ]
+  }
+}
