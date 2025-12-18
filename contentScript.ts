@@ -1,7 +1,6 @@
-
 /**
  * Этот скрипт работает непосредственно на страницах f-ariel.ru
- * Обновлен для максимальной устойчивости к изменениям верстки.
+ * Рефакторинг: улучшена детекция кнопок, timing, логи, обработка ошибок.
  */
 
 declare const chrome: any;
@@ -23,6 +22,7 @@ const updateConfig = () => {
       config.dropTime = result.dropTime || "";
       config.multiOrder = result.multiOrderEnabled || false;
       
+      console.log('Ariel Bot: Config updated', config);
       checkOrderSuccess();
       if (config.autoRefresh) checkAndRefresh();
     });
@@ -31,90 +31,134 @@ const updateConfig = () => {
 
 if (typeof chrome !== 'undefined' && chrome.storage) {
   chrome.storage.onChanged.addListener(() => updateConfig());
+  setInterval(updateConfig, 500); // Частое обновление config
 }
 
 /**
- * Ищет кнопку "В корзину" максимально широким охватом
+ * Ищет кнопку "В корзину" с учетом вложенности и динамики
  */
-const findBasketButton = (): HTMLButtonElement | HTMLElement | null => {
-  // 1. По известным атрибутам и классам
-  const selector = '[data-add-to-basket], .js-add-to-basket, button.buy, .btn-buy, .to_basket, .add_to_cart';
-  let btn = document.querySelector(selector) as HTMLElement;
+const findBasketButton = (): HTMLElement | null => {
+  console.log('Ariel Bot: Searching for basket button...');
   
-  // 2. Если не нашли, ищем по тексту внутри всех кнопок
-  if (!btn || btn.offsetParent === null) {
-    const allButtons = Array.from(document.querySelectorAll('button, a.btn, .button'));
-    btn = allButtons.find(el => {
-      const text = el.textContent?.toLowerCase() || "";
-      return (text.includes('корзин') || text.includes('купить') || text.includes('заказ')) && 
-             (el as any).disabled !== true && 
-             (el as HTMLElement).offsetParent !== null;
-    }) as HTMLElement;
+  // Основные селекторы
+  const selectors = [
+    '[data-add-to-basket] button', // Вложенная кнопка
+    '[data-add-to-basket] .btn',   // Или div с классом btn
+    '[data-add-to-basket]',        // Сам контейнер, если кликабелен
+    '.js-add-to-basket',
+    'button.buy, .btn-buy, .to_basket, .add_to_cart'
+  ];
+  
+  for (const sel of selectors) {
+    const btn = document.querySelector(sel) as HTMLElement;
+    if (btn && isElementInteractive(btn)) {
+      console.log('Ariel Bot: Found button via selector:', sel);
+      return btn;
+    }
   }
   
-  return btn;
+  // Поиск по тексту
+  const allInteractive = Array.from(document.querySelectorAll('button, a, div.btn, [role="button"]'));
+  const btn = allInteractive.find(el => {
+    const text = el.textContent?.toLowerCase().trim() || "";
+    return ['корзину', 'в корзину', 'купить', 'добавить', 'заказать'].some(kw => text.includes(kw)) &&
+           isElementInteractive(el as HTMLElement);
+  }) as HTMLElement;
+  
+  if (btn) {
+    console.log('Ariel Bot: Found button via text:', btn.textContent);
+    return btn;
+  }
+  
+  console.log('Ariel Bot: No button found');
+  return null;
 };
 
 /**
- * Ищет кнопку перехода к оформлению
+ * Проверяет, интерактивен ли элемент (видим, не disabled, в DOM)
+ */
+const isElementInteractive = (el: HTMLElement): boolean => {
+  return !!el &&
+         el.offsetParent !== null &&
+         getComputedStyle(el).display !== 'none' &&
+         getComputedStyle(el).visibility !== 'hidden' &&
+         !(el as any).disabled &&
+         !el.classList.contains('disabled');
+};
+
+/**
+ * Ищет кнопку оформления заказа
  */
 const findCheckoutButton = (): HTMLElement | null => {
-  const keywords = ['оформить', 'перейти', 'корзин', 'чек', 'оплата'];
-  const elements = Array.from(document.querySelectorAll('a, button, span, div.btn'));
+  console.log('Ariel Bot: Searching for checkout button...');
+  const keywords = ['оформить', 'перейти к оформлению', 'корзина', 'чек-аут', 'оплата', 'заказать'];
+  const allInteractive = Array.from(document.querySelectorAll('a, button, div.btn, [role="button"]'));
   
-  return elements.find(el => {
-    const text = el.textContent?.trim().toLowerCase() || "";
-    const isVisible = (el as HTMLElement).offsetParent !== null;
-    return isVisible && keywords.some(key => text.includes(key));
-  }) as HTMLElement || null;
+  const btn = allInteractive.find(el => {
+    const text = el.textContent?.toLowerCase().trim() || "";
+    return keywords.some(kw => text.includes(kw)) && isElementInteractive(el as HTMLElement);
+  }) as HTMLElement;
+  
+  if (btn) console.log('Ariel Bot: Found checkout:', btn.textContent);
+  return btn;
 };
 
 const checkOrderSuccess = () => {
   if (!config.multiOrder || !config.enabled) return;
 
-  const successIndicators = ['заявка принята', 'спасибо за заказ', 'заказ сформирован', 'успешно'];
+  const successKeywords = ['заявка принята', 'спасибо за заказ', 'заказ сформирован', 'успешно', 'success', 'confirmed'];
   const bodyText = document.body.textContent?.toLowerCase() || "";
-  const isSuccessPage = successIndicators.some(text => bodyText.includes(text)) || 
-                        window.location.href.includes('success') || 
-                        window.location.href.includes('confirm');
+  const isSuccess = successKeywords.some(kw => bodyText.includes(kw)) ||
+                    window.location.href.includes('success') ||
+                    window.location.href.includes('confirm') ||
+                    window.location.href.includes('thank') ||
+                    document.querySelector('[data-order-success]'); // Если есть атрибут
 
-  if (isSuccessPage) {
-    console.log('Ariel Bot: Order success detected!');
+  if (isSuccess) {
+    console.log('Ariel Bot: Order success! Returning for multi-order...');
     setTimeout(() => {
-      window.history.back(); 
-      setTimeout(() => location.reload(), 2000);
-    }, 1500);
+      window.history.back();
+      setTimeout(() => location.reload(), 1000);
+    }, 1000);
   }
 };
 
 const performFullCycle = async () => {
-  if (!config.enabled) return;
+  if (!config.enabled) return false;
 
   const basketBtn = findBasketButton();
-  
-  if (basketBtn && (basketBtn as any).disabled !== true) {
-    console.log('Ariel Bot: TARGET DETECTED! Clicking...');
-    
-    if (typeof chrome !== 'undefined' && chrome.storage) {
-      chrome.storage.local.set({ autoRefreshEnabled: false });
+  if (basketBtn) {
+    console.log('Ariel Bot: Clicking basket button...');
+    try {
+      await new Promise(resolve => setTimeout(resolve, config.delay));
+      basketBtn.click();
+      
+      // Retry если не сработало (например, если нужно 2 клика)
+      setTimeout(() => {
+        if (!findCheckoutButton()) basketBtn.click();
+      }, 200);
+      
+      let attempts = 0;
+      const maxAttempts = 100; // 5 сек
+      const checkoutInterval = setInterval(() => {
+        attempts++;
+        const checkoutBtn = findCheckoutButton();
+        if (checkoutBtn) {
+          console.log('Ariel Bot: Clicking checkout...');
+          checkoutBtn.click();
+          clearInterval(checkoutInterval);
+          if (config.multiOrder) setTimeout(checkOrderSuccess, 1000);
+        }
+        if (attempts > maxAttempts) {
+          clearInterval(checkoutInterval);
+          console.error('Ariel Bot: Checkout not found after retries');
+        }
+      }, 50);
+      
+      return true;
+    } catch (e) {
+      console.error('Ariel Bot: Click error', e);
     }
-
-    await new Promise(resolve => setTimeout(resolve, config.delay));
-    basketBtn.click();
-
-    let attempts = 0;
-    const findCheckoutInterval = setInterval(() => {
-      attempts++;
-      const checkoutBtn = findCheckoutButton();
-
-      if (checkoutBtn) {
-        checkoutBtn.click();
-        clearInterval(findCheckoutInterval);
-        if (config.multiOrder) setTimeout(checkOrderSuccess, 1000);
-      }
-      if (attempts > 60) clearInterval(findCheckoutInterval); // 3 секунды мониторинга
-    }, 50);
-    return true;
   }
   return false;
 };
@@ -122,49 +166,55 @@ const performFullCycle = async () => {
 const checkAndRefresh = () => {
   if (!config.autoRefresh || !config.dropTime) return;
 
-  const now = new Date();
-  const [hours, minutes, seconds] = config.dropTime.split(':').map(Number);
-  const dropDate = new Date();
-  dropDate.setHours(hours, minutes, seconds || 0, 0);
+  const now = new Date().getTime();
+  const [h, m, s] = config.dropTime.split(':').map(Number);
+  const dropTimestamp = new Date().setHours(h, m, s || 0, 0);
 
-  const timeDiff = dropDate.getTime() - now.getTime();
+  const timeDiff = dropTimestamp - now;
 
-  if (timeDiff < -15000 && !config.multiOrder) return;
+  if (timeDiff < -15000 && !config.multiOrder) return; // После дропа +15с stop если не multi
 
   if (findBasketButton()) {
     performFullCycle();
     return;
   }
 
-  let nextRefreshDelay = 10000;
+  // Адаптивная задержка: ближе к дропу — чаще
+  let nextDelay = 10000;
   if (timeDiff <= 0) {
-    nextRefreshDelay = 1200; 
+    nextDelay = 100; // После дропа — очень часто
+  } else if (timeDiff <= 2000) {
+    nextDelay = 100; // За 2с до — polling
   } else if (timeDiff <= 10000) {
-    nextRefreshDelay = Math.max(1000, Math.min(1200, timeDiff - 150));
+    nextDelay = 500;
   } else if (timeDiff <= 30000) {
-    nextRefreshDelay = 3500;
-  } else {
-    nextRefreshDelay = 10000;
+    nextDelay = 2000;
   }
 
+  console.log('Ariel Bot: Next refresh in', nextDelay / 1000, 'sec');
   setTimeout(() => {
     if (!findBasketButton()) {
       location.reload();
     } else {
       performFullCycle();
     }
-  }, nextRefreshDelay);
+    checkAndRefresh(); // Рекурсия для continuous
+  }, nextDelay);
 };
 
-const observer = new MutationObserver(() => {
-  if (config.enabled) performFullCycle();
+const observer = new MutationObserver((mutations) => {
+  if (config.enabled) {
+    console.log('Ariel Bot: DOM changed, checking...');
+    performFullCycle();
+  }
 });
 
 observer.observe(document.body, {
   childList: true,
   subtree: true,
   attributes: true,
-  attributeFilter: ['disabled', 'class', 'style']
+  attributeFilter: ['disabled', 'class', 'style', 'data-*'] // Добавлены data-attrs
 });
 
 updateConfig();
+setInterval(performFullCycle, 200); // Дополнительный polling
