@@ -1,220 +1,188 @@
-/**
- * Этот скрипт работает непосредственно на страницах f-ariel.ru
- * Рефакторинг: улучшена детекция кнопок, timing, логи, обработка ошибок.
- */
+
+import React, { useState, useEffect, useCallback } from 'react';
+import { Product, UserInfo, DeliveryMethod } from './types';
+import { ProductCard } from './components/ProductCard';
+import { Sidebar } from './components/Sidebar';
+import { BotControls } from './components/BotControls';
+import { Menu, User, Settings, ExternalLink } from 'lucide-react';
 
 declare const chrome: any;
 
-let config = {
-  enabled: false,
-  delay: 50,
-  autoRefresh: false,
-  dropTime: "",
-  multiOrder: false
+const INITIAL_PRODUCT: Product = {
+  id: '354',
+  title: 'Лошадка из коллекции «Акварель»',
+  collection: 'Лимитированная серия',
+  price: 9500,
+  imageUrl: 'https://www.f-ariel.ru/upload/image_resize_cache/iblock/ddd/o0iwztz81ios0cakprwftof2yzuh6a05-484-484-canvas.webp',
+  dropDate: new Date(Date.now() + 1000 * 15),
+  status: 'upcoming',
 };
 
-const updateConfig = () => {
-  if (typeof chrome !== 'undefined' && chrome.storage) {
-    chrome.storage.local.get(['autoClickerEnabled', 'clickDelay', 'autoRefreshEnabled', 'dropTime', 'multiOrderEnabled'], (result: any) => {
-      config.enabled = result.autoClickerEnabled || false;
-      config.delay = result.clickDelay || 50;
-      config.autoRefresh = result.autoRefreshEnabled || false;
-      config.dropTime = result.dropTime || "";
-      config.multiOrder = result.multiOrderEnabled || false;
-      
-      console.log('Ariel Bot: Config updated', config);
-      checkOrderSuccess();
-      if (config.autoRefresh) checkAndRefresh();
-    });
-  }
+const USER: UserInfo = {
+  name: 'Юлия Быкова',
+  phone: '+7 (903) 127-45-93',
 };
 
-if (typeof chrome !== 'undefined' && chrome.storage) {
-  chrome.storage.onChanged.addListener(() => updateConfig());
-  setInterval(updateConfig, 500); // Частое обновление config
-}
+const DELIVERY: DeliveryMethod = {
+  id: 'self-pickup',
+  name: 'Самовывоз из магазина',
+  address: 'Нижний Новгород, шоссе Жиркомбината, 8а, лит. Б.',
+};
 
-/**
- * Ищет кнопку "В корзину" с учетом вложенности и динамики
- */
-const findBasketButton = (): HTMLElement | null => {
-  console.log('Ariel Bot: Searching for basket button...');
+const App: React.FC = () => {
+  const [product, setProduct] = useState<Product>(INITIAL_PRODUCT);
+  const [cart, setCart] = useState<Product[]>([]);
+  const [orderPlaced, setOrderPlaced] = useState(false);
   
-  // Основные селекторы
-  const selectors = [
-    '[data-add-to-basket] button', // Вложенная кнопка
-    '[data-add-to-basket] .btn',   // Или div с классом btn
-    '[data-add-to-basket]',        // Сам контейнер, если кликабелен
-    '.js-add-to-basket',
-    'button.buy, .btn-buy, .to_basket, .add_to_cart'
-  ];
-  
-  for (const sel of selectors) {
-    const btn = document.querySelector(sel) as HTMLElement;
-    if (btn && isElementInteractive(btn)) {
-      console.log('Ariel Bot: Found button via selector:', sel);
-      return btn;
+  const [isAutoClickerEnabled, setIsAutoClickerEnabled] = useState(false);
+  const [clickDelay, setClickDelay] = useState(50); 
+  const [reactionTime, setReactionTime] = useState<number | null>(null);
+  const [isTraining, setIsTraining] = useState(false);
+  const [wasAutoClicked, setWasAutoClicked] = useState(false);
+  const [isMultiOrder, setIsMultiOrder] = useState(false);
+
+  useEffect(() => {
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      chrome.storage.local.get(['autoClickerEnabled', 'clickDelay', 'multiOrderEnabled'], (result: any) => {
+        if (result.autoClickerEnabled !== undefined) setIsAutoClickerEnabled(result.autoClickerEnabled);
+        if (result.clickDelay !== undefined) setClickDelay(result.clickDelay);
+        if (result.multiOrderEnabled !== undefined) setIsMultiOrder(result.multiOrderEnabled);
+      });
     }
-  }
-  
-  // Поиск по тексту
-  const allInteractive = Array.from(document.querySelectorAll('button, a, div.btn, [role="button"]'));
-  const btn = allInteractive.find(el => {
-    const text = el.textContent?.toLowerCase().trim() || "";
-    return ['корзину', 'в корзину', 'купить', 'добавить', 'заказать'].some(kw => text.includes(kw)) &&
-           isElementInteractive(el as HTMLElement);
-  }) as HTMLElement;
-  
-  if (btn) {
-    console.log('Ariel Bot: Found button via text:', btn.textContent);
-    return btn;
-  }
-  
-  console.log('Ariel Bot: No button found');
-  return null;
-};
+  }, []);
 
-/**
- * Проверяет, интерактивен ли элемент (видим, не disabled, в DOM)
- */
-const isElementInteractive = (el: HTMLElement): boolean => {
-  return !!el &&
-         el.offsetParent !== null &&
-         getComputedStyle(el).display !== 'none' &&
-         getComputedStyle(el).visibility !== 'hidden' &&
-         !(el as any).disabled &&
-         !el.classList.contains('disabled');
-};
+  const handleToggleAutoClicker = (enabled: boolean) => {
+    setIsAutoClickerEnabled(enabled);
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      chrome.storage.local.set({ autoClickerEnabled: enabled });
+    }
+  };
 
-/**
- * Ищет кнопку оформления заказа
- */
-const findCheckoutButton = (): HTMLElement | null => {
-  console.log('Ariel Bot: Searching for checkout button...');
-  const keywords = ['оформить', 'перейти к оформлению', 'корзина', 'чек-аут', 'оплата', 'заказать'];
-  const allInteractive = Array.from(document.querySelectorAll('a, button, div.btn, [role="button"]'));
-  
-  const btn = allInteractive.find(el => {
-    const text = el.textContent?.toLowerCase().trim() || "";
-    return keywords.some(kw => text.includes(kw)) && isElementInteractive(el as HTMLElement);
-  }) as HTMLElement;
-  
-  if (btn) console.log('Ariel Bot: Found checkout:', btn.textContent);
-  return btn;
-};
+  const handleDelayChange = (val: number) => {
+    setClickDelay(val);
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      chrome.storage.local.set({ clickDelay: val });
+    }
+  };
 
-const checkOrderSuccess = () => {
-  if (!config.multiOrder || !config.enabled) return;
+  const addToCart = useCallback((item: Product, isAuto: boolean = false) => {
+    const now = Date.now();
+    const dropTime = item.dropDate.getTime();
+    setReactionTime(Math.max(0, now - dropTime));
+    setWasAutoClicked(isAuto);
+    setCart([item]);
 
-  const successKeywords = ['заявка принята', 'спасибо за заказ', 'заказ сформирован', 'успешно', 'success', 'confirmed'];
-  const bodyText = document.body.textContent?.toLowerCase() || "";
-  const isSuccess = successKeywords.some(kw => bodyText.includes(kw)) ||
-                    window.location.href.includes('success') ||
-                    window.location.href.includes('confirm') ||
-                    window.location.href.includes('thank') ||
-                    document.querySelector('[data-order-success]'); // Если есть атрибут
-
-  if (isSuccess) {
-    console.log('Ariel Bot: Order success! Returning for multi-order...');
-    setTimeout(() => {
-      window.history.back();
-      setTimeout(() => location.reload(), 1000);
-    }, 1000);
-  }
-};
-
-const performFullCycle = async () => {
-  if (!config.enabled) return false;
-
-  const basketBtn = findBasketButton();
-  if (basketBtn) {
-    console.log('Ariel Bot: Clicking basket button...');
-    try {
-      await new Promise(resolve => setTimeout(resolve, config.delay));
-      basketBtn.click();
-      
-      // Retry если не сработало (например, если нужно 2 клика)
+    if (isAuto) {
       setTimeout(() => {
-        if (!findCheckoutButton()) basketBtn.click();
-      }, 200);
-      
-      let attempts = 0;
-      const maxAttempts = 100; // 5 сек
-      const checkoutInterval = setInterval(() => {
-        attempts++;
-        const checkoutBtn = findCheckoutButton();
-        if (checkoutBtn) {
-          console.log('Ariel Bot: Clicking checkout...');
-          checkoutBtn.click();
-          clearInterval(checkoutInterval);
-          if (config.multiOrder) setTimeout(checkOrderSuccess, 1000);
+        setOrderPlaced(true);
+        // Если включен режим конвейера, симулируем возврат через 3 секунды
+        if (isMultiOrder) {
+           setTimeout(() => {
+              setOrderPlaced(false);
+              setCart([]);
+              setProduct(prev => ({ ...prev, status: 'available' }));
+           }, 3000);
         }
-        if (attempts > maxAttempts) {
-          clearInterval(checkoutInterval);
-          console.error('Ariel Bot: Checkout not found after retries');
-        }
-      }, 50);
-      
-      return true;
-    } catch (e) {
-      console.error('Ariel Bot: Click error', e);
+      }, 300);
     }
+  }, [isMultiOrder]);
+
+  const handleTimerComplete = useCallback(() => {
+    setProduct((prev) => ({ ...prev, status: 'available' }));
+  }, []);
+
+  useEffect(() => {
+    let timeout: ReturnType<typeof setTimeout>;
+    if (product.status === 'available' && isAutoClickerEnabled && !orderPlaced && cart.length === 0) {
+      timeout = setTimeout(() => {
+        addToCart(product, true);
+      }, clickDelay);
+    }
+    return () => clearTimeout(timeout);
+  }, [product.status, isAutoClickerEnabled, orderPlaced, cart.length, clickDelay, addToCart, product]);
+
+  const resetDemo = () => {
+    setCart([]);
+    setOrderPlaced(false);
+    setReactionTime(null);
+    setWasAutoClicked(false);
+    setIsTraining(false);
+    setProduct({...INITIAL_PRODUCT, dropDate: new Date(Date.now() + 1000 * 15), status: 'upcoming'});
+  };
+
+  const startTraining = () => {
+    setCart([]);
+    setOrderPlaced(false);
+    setReactionTime(null);
+    setWasAutoClicked(false);
+    setIsTraining(true);
+    setProduct({...INITIAL_PRODUCT, dropDate: new Date(Date.now() + 2000), status: 'upcoming'});
+  };
+
+  const isExtensionPopup = typeof window !== 'undefined' && window.innerWidth < 600;
+
+  if (isExtensionPopup) {
+    return (
+      <div className="w-[400px] bg-[#1A1C21] min-h-[500px] flex flex-col p-4">
+        <div className="flex items-center justify-between mb-6 border-b border-gray-800 pb-4 text-white">
+          <span className="font-bold text-sm">Ariel Assistant</span>
+          <div className="text-[10px] text-green-500 font-bold uppercase animate-pulse">Live Mode</div>
+        </div>
+        <BotControls 
+          isAutoClickerEnabled={isAutoClickerEnabled}
+          onToggleAutoClicker={handleToggleAutoClicker}
+          delay={clickDelay}
+          onDelayChange={handleDelayChange}
+          onStartTraining={startTraining}
+          lastReactionTime={reactionTime}
+          isTraining={isTraining}
+        />
+        <a href="https://www.f-ariel.ru/" target="_blank" rel="noreferrer" className="mt-4 flex items-center justify-center gap-2 w-full py-3 bg-[#0D66CE] text-white rounded-xl text-sm font-bold">
+          <span>На сайт f-ariel.ru</span>
+          <ExternalLink className="w-4 h-4" />
+        </a>
+      </div>
+    );
   }
-  return false;
+
+  return (
+    <div className="flex min-h-screen flex-col bg-white">
+      <header className="fixed z-20 top-0 right-0 left-0 h-16 lg:h-20 bg-white shadow-sm border-b border-gray-100 px-4">
+        <div className="container mx-auto h-full flex items-center justify-between">
+           <img src="https://www.f-ariel.ru/local/frontend/dist/assets/logo.svg" alt="ARIEL" className="h-6" />
+           <div className="text-xs font-bold text-purple-600 uppercase tracking-widest bg-purple-50 px-3 py-1 rounded-full">Simulator v2.0</div>
+        </div>
+      </header>
+
+      <div className="block lg:grid grid-cols-[1fr_min-content] pt-16 lg:pt-20 flex-1">
+        <main className="container mx-auto py-10 px-4 lg:max-w-[1000px]">
+          <h1 className="text-2xl font-bold mb-8">Режим конвейера (Цикличная покупка)</h1>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <ProductCard product={product} onAddToCart={(p) => addToCart(p, false)} onTimerComplete={handleTimerComplete} />
+            <div>
+               <BotControls 
+                  isAutoClickerEnabled={isAutoClickerEnabled}
+                  onToggleAutoClicker={handleToggleAutoClicker}
+                  delay={clickDelay}
+                  onDelayChange={handleDelayChange}
+                  onStartTraining={startTraining}
+                  lastReactionTime={reactionTime}
+                  isTraining={isTraining}
+               />
+               <div className="mt-4 p-4 bg-gray-50 rounded-xl text-[11px] text-gray-500 leading-relaxed">
+                  <strong>Как работает «Конвейер» в симуляторе:</strong><br/>
+                  После успешной покупки симулятор подождет 3 секунды и сам вернет товар в статус «Доступен», имитируя возврат со страницы успеха.
+               </div>
+               <button onClick={resetDemo} className="mt-4 text-xs text-gray-400 underline">Сбросить все</button>
+            </div>
+          </div>
+        </main>
+        <section className="bg-[#F8F9FB] border-l border-gray-100 lg:w-[400px]">
+          <Sidebar cart={cart} userInfo={USER} delivery={DELIVERY} onCheckout={() => setOrderPlaced(true)} orderPlaced={orderPlaced} wasAutoClicked={wasAutoClicked} reactionTime={reactionTime} />
+        </section>
+      </div>
+    </div>
+  );
 };
 
-const checkAndRefresh = () => {
-  if (!config.autoRefresh || !config.dropTime) return;
-
-  const now = new Date().getTime();
-  const [h, m, s] = config.dropTime.split(':').map(Number);
-  const dropTimestamp = new Date().setHours(h, m, s || 0, 0);
-
-  const timeDiff = dropTimestamp - now;
-
-  if (timeDiff < -15000 && !config.multiOrder) return; // После дропа +15с stop если не multi
-
-  if (findBasketButton()) {
-    performFullCycle();
-    return;
-  }
-
-  // Адаптивная задержка: ближе к дропу — чаще
-  let nextDelay = 10000;
-  if (timeDiff <= 0) {
-    nextDelay = 100; // После дропа — очень часто
-  } else if (timeDiff <= 2000) {
-    nextDelay = 100; // За 2с до — polling
-  } else if (timeDiff <= 10000) {
-    nextDelay = 500;
-  } else if (timeDiff <= 30000) {
-    nextDelay = 2000;
-  }
-
-  console.log('Ariel Bot: Next refresh in', nextDelay / 1000, 'sec');
-  setTimeout(() => {
-    if (!findBasketButton()) {
-      location.reload();
-    } else {
-      performFullCycle();
-    }
-    checkAndRefresh(); // Рекурсия для continuous
-  }, nextDelay);
-};
-
-const observer = new MutationObserver((mutations) => {
-  if (config.enabled) {
-    console.log('Ariel Bot: DOM changed, checking...');
-    performFullCycle();
-  }
-});
-
-observer.observe(document.body, {
-  childList: true,
-  subtree: true,
-  attributes: true,
-  attributeFilter: ['disabled', 'class', 'style', 'data-*'] // Добавлены data-attrs
-});
-
-updateConfig();
-setInterval(performFullCycle, 200); // Дополнительный polling
+export default App;
